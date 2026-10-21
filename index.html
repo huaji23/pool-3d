@@ -61,6 +61,25 @@ canvas{display:block}
   cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#7ee8a2,#2fa860);
   color:#04150b}
 
+/* 白球操作提示 */
+#cueHint{position:fixed;left:0;top:0;pointer-events:none;z-index:20;
+  transform:translate(-50%,-50%);display:none}
+#cueHint.show{display:block}
+#cueHint .ring{width:96px;height:96px;border-radius:50%;
+  border:4px solid #7ee8a2;
+  box-shadow:0 0 26px rgba(126,232,162,.95),inset 0 0 18px rgba(126,232,162,.45);
+  animation:pulse 1.1s ease-in-out infinite;margin:0 auto}
+@keyframes pulse{
+  0%,100%{transform:scale(.9);opacity:.7}
+  50%{transform:scale(1.15);opacity:1}
+}
+#cueHint .lbl{margin-top:9px;text-align:center;font-size:13px;font-weight:800;
+  color:#fff;letter-spacing:2px;white-space:nowrap;
+  background:rgba(20,60,36,.92);border:1px solid rgba(126,232,162,.6);
+  border-radius:14px;padding:4px 12px;display:inline-block;
+  text-shadow:0 1px 4px rgba(0,0,0,.9)}
+#cueHint .lbl{transform:translateX(-50%);position:relative;left:50%}
+
 #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   flex-direction:column;gap:14px;background:#080a0e;z-index:200;transition:opacity .4s}
 #load.gone{opacity:0;pointer-events:none}
@@ -84,7 +103,13 @@ canvas{display:block}
 
 <div class="powerWrap"><i id="powerBar"></i></div>
 
-<div class="msg" id="msg">拖住白球往后拉，松手击球</div>
+<!-- 白球操作提示层（HTML 覆盖，保证一定看得见） -->
+<div id="cueHint">
+  <div class="ring"></div>
+  <div class="lbl">按住&nbsp;拖</div>
+</div>
+
+<div class="msg show" id="msg">① 按住白球　② 往后拖　③ 松手击球</div>
 
 <div class="bar">
   <button id="resetBtn">重新摆球</button>
@@ -133,7 +158,7 @@ const COLORS = {
 /* ══════════ 场景 ══════════ */
 let scene, camera, renderer, raycaster;
 let ballMeshes = [];           // {mesh, data}
-let cueMesh, aimLine, ghostMesh;
+let cueMesh, aimLine, ghostMesh, cueRing;
 let balls = [];                // 物理数据 {x,z,vx,vz,n,alive,color,stripe}
 
 let aiming = false, aimStart = null, aimNow = null;
@@ -186,6 +211,7 @@ function initScene(){
   buildBalls();
   buildCueAndAim();
   setupCamera();
+  showIdleCue();
   document.getElementById('load').classList.add('gone');
   animate();
 }
@@ -391,27 +417,42 @@ function buildCueAndAim(){
 
   // 球杆
   cueMesh = new THREE.Group();
+  const CUE_LEN = 0.62;
   const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.006*S, 0.011*S, 1.15*S, 12),
-    new THREE.MeshStandardMaterial({color:0xd8b878, roughness:.5})
+    new THREE.CylinderGeometry(0.013*S, 0.020*S, CUE_LEN*S, 14),
+    new THREE.MeshStandardMaterial({color:0xe8c890, roughness:.42, metalness:.05})
   );
   shaft.rotation.z = Math.PI/2;
-  shaft.position.x = 0.575*S;
+  shaft.position.x = CUE_LEN*0.5*S;
+  shaft.castShadow = true;
   cueMesh.add(shaft);
   const tip = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.006*S, 0.006*S, 0.03*S, 12),
-    new THREE.MeshStandardMaterial({color:0x2a5a8a, roughness:.7})
+    new THREE.CylinderGeometry(0.013*S, 0.013*S, 0.025*S, 14),
+    new THREE.MeshStandardMaterial({color:0x2a6aaa, roughness:.6})
   );
   tip.rotation.z = Math.PI/2;
-  tip.position.x = 0.015*S;
+  tip.position.x = 0.012*S;
   cueMesh.add(tip);
   const butt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.011*S, 0.011*S, 0.16*S, 12),
-    new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:.6})
+    new THREE.CylinderGeometry(0.020*S, 0.020*S, 0.10*S, 14),
+    new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:.55})
   );
   butt.rotation.z = Math.PI/2;
-  butt.position.x = 1.16*S;
+  butt.position.x = (CUE_LEN + 0.04)*S;
+  butt.castShadow = true;
   cueMesh.add(butt);
+
+  // ⭐ 待机提示圈：环绕白球呼吸的绿环，这是「这里可以操作」的唯一明确暗示
+  cueRing = new THREE.Mesh(
+    new THREE.RingGeometry(BALL_R*S*1.35, BALL_R*S*2.1, 44),
+    new THREE.MeshBasicMaterial({color:0x7ee8a2, side:THREE.DoubleSide,
+      transparent:true, opacity:.9, depthWrite:false, depthTest:false})
+  );
+  cueRing.rotation.x = -Math.PI/2;
+  cueRing.position.y = BALL_R*S*1.2;
+  cueRing.renderOrder = 999;      // 强制画在最上层
+  cueRing.visible = false;
+  scene.add(cueRing);
   cueMesh.visible = false;
   scene.add(cueMesh);
 }
@@ -534,7 +575,7 @@ function animate(t){
     for(let s=0;s<sub;s++){
       if(stepPhysics(h)) anyMoving = true;
     }
-    if(!anyMoving) shooting = false;
+    if(!anyMoving){ shooting = false; showIdleCue(); }
   }
 
   // 同步渲染位置
@@ -545,6 +586,19 @@ function animate(t){
       bm.mesh.position.set(d.x*S, BALL_R*S, d.z*S);
     } else {
       bm.mesh.visible = false;
+    }
+  }
+
+  syncCueHint();
+
+  // 提示圈呼吸动画
+  if(cueRing && cueRing.visible){
+    const cb = balls.find(b=>b.n===0 && b.alive);
+    if(cb){
+      cueRing.position.set(cb.x*S, BALL_R*S*1.2, cb.z*S);
+      const k = 1 + Math.sin(now*0.004)*0.14;
+      cueRing.scale.set(k, k, 1);
+      cueRing.material.opacity = 0.45 + Math.sin(now*0.004)*0.3;
     }
   }
 
@@ -578,34 +632,70 @@ function pointerToTable(ev){
 }
 
 let cueBall = null;
+let pressPt = null;        // 屏幕坐标按下点
+let lastDragPx = 0;        // 已拖了多少像素
+const AIM_RADIUS_PX = 90;  // 按在白球多少像素内才算瞄准
+const DRAG_FULL_PX  = 190; // 拖多少像素到满力
+const DRAG_MIN_PX   = 22;  // 少于这个距离不击球（防误触）
+
+function cueBallScreenPos(){
+  if(!cueBall) return null;
+  const r = renderer.domElement.getBoundingClientRect();
+  const v = new THREE.Vector3(cueBall.x, BALL_R*S, cueBall.z).project(camera);
+  return { x: r.left + (v.x*0.5+0.5)*r.width,
+           y: r.top  + (-v.y*0.5+0.5)*r.height,
+           rect: r };
+}
 
 function onDown(ev){
   if(shooting) return;
+  const e = ev.touches ? ev.touches[0] : ev;
   cueBall = balls.find(b=>b.n===0 && b.alive);
   if(!cueBall) return;
+
+  const cs = cueBallScreenPos();
+  if(!cs) return;
+  const d = Math.hypot(e.clientX-cs.x, e.clientY-cs.y);
+
+  // ⚠️ 关键：必须按在白球附近才算瞄准。
+  //    否则「随便点一下桌面」会被当成满力击球（之前的致命 bug）
+  if(d > AIM_RADIUS_PX){
+    toast('按住白球，往后拖，松手击球');
+    return;
+  }
+
   const p = pointerToTable(ev);
-  if(!p) return;
   aiming = true;
-  aimStart = p;
-  aimNow = p;
+  hideCueRing();
+  pressPt = {x:e.clientX, y:e.clientY};
+  lastDragPx = 0;
+  aimStart = p || {x:cueBall.x, z:cueBall.z};
+  aimNow = p || {x:cueBall.x, z:cueBall.z};
   updateAim();
 }
+
 function onMove(ev){
   if(!aiming) return;
-  ev.preventDefault && ev.preventDefault();
+  const e = ev.touches ? ev.touches[0] : ev;
+  if(ev.cancelable) ev.preventDefault();
   const p = pointerToTable(ev);
   if(!p) return;
   aimNow = p;
+  // 力度按屏幕拖拽像素算（比世界坐标更符合手感）
+  lastDragPx = Math.hypot(e.clientX-pressPt.x, e.clientY-pressPt.y);
   updateAim();
 }
-function onUp(){
+
+function onUp(ev){
   if(!aiming) return;
   aiming = false;
-  if(power > 0.04){
+  if(lastDragPx >= DRAG_MIN_PX && power > 0.05){
     shoot();
   } else {
     clearAim();
+    toast('拖远一点再松手');
   }
+  pressPt = null; lastDragPx = 0;
 }
 
 function updateAim(){
@@ -617,9 +707,8 @@ function updateAim(){
   if(len < 1e-4){ clearAim(); return; }
   dx /= len; dz /= len;
 
-  // 力度：拖得越远越大
-  const pull = Math.min(len, 0.55);
-  power = pull / 0.55;
+  // 力度：按屏幕拖拽像素算（比世界坐标更贴手感，也不受相机远近影响）
+  power = Math.min(1, lastDragPx / DRAG_FULL_PX);
 
   document.getElementById('powerBar').style.height = (power*100)+'%';
 
@@ -663,9 +752,8 @@ function updateAim(){
     BALL_R*S*0.85,
     (cueBall.z - dz*(BALL_R+0.06+power*0.28))*S
   );
-  cueMesh.rotation.y = Math.atan2(-dz, dx) * -1 + Math.PI;
-  // 让杆沿方向指向球
-  cueMesh.rotation.y = Math.atan2(dz, dx);
+  // 杆身朝「击球方向的反方向」伸展，杆头贴着白球
+  cueMesh.rotation.y = Math.atan2(dz, -dx);
 }
 
 function clearAim(){
@@ -675,6 +763,40 @@ function clearAim(){
   power = 0;
   document.getElementById('powerBar').style.height = '0%';
   aimStart = null; aimNow = null;
+  showIdleCue();
+}
+function hideCueRing(){ if(cueRing) cueRing.visible = false; }
+
+/* HTML 提示层：跟着白球走，只在「该你打」的时候显示 */
+function syncCueHint(){
+  const el = document.getElementById('cueHint');
+  if(!el) return;
+  const cb = balls.find(b=>b.n===0 && b.alive);
+  const showIt = cb && !shooting && !aiming && !ended
+                 && !document.getElementById('win').classList.contains('show');
+  if(!showIt){ el.classList.remove('show'); return; }
+  const r = renderer.domElement.getBoundingClientRect();
+  const v = new THREE.Vector3(cb.x, BALL_R*S, cb.z).project(camera);
+  const x = r.left + (v.x*0.5+0.5)*r.width;
+  const y = r.top  + (-v.y*0.5+0.5)*r.height;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  el.classList.add('show');
+}
+
+/* 静止时：球杆常显在白球右边，告诉用户「这里可以瞄」 */
+function showIdleCue(){
+  const cb = balls.find(b=>b.n===0 && b.alive);
+  if(!cb || shooting || aiming){ if(shooting||aiming) cueMesh.visible=false; return; }
+  cueMesh.visible = true;
+  // 球堆在 +x 方向，所以杆放在白球左侧、杆身往左伸展
+  cueMesh.position.set((cb.x - BALL_R - 0.10)*S, BALL_R*S*0.85, cb.z*S);
+  cueMesh.rotation.y = Math.PI;
+  // 白球周围呼吸光圈 —— 明确的「按住这里」暗示
+  if(cueRing){
+    cueRing.visible = true;
+    cueRing.position.set(cb.x*S, BALL_R*S*1.2, cb.z*S);
+  }
 }
 
 function shoot(){
@@ -693,6 +815,7 @@ function shoot(){
 
   shots++;
   shooting = true;
+  hideCueRing();
   clearAim();
   toast('击球！');
 }
@@ -759,9 +882,9 @@ function newGame(){
   clearAim();
   rackBalls();
   buildBalls();
-  // 重新绑定 mesh
   updateHUD();
-  toast('重新摆球');
+  showIdleCue();
+  toast('重新摆球 · 按住白球拖动');
 }
 
 /* ══════════ 启动 ══════════ */
